@@ -18,18 +18,22 @@ const ADMIN_USER = "dongtran2699";
 interface DBAdapter {
   init(): Promise<void>;
   getMessages(roomId: string, limit: number): Promise<any[]>;
-  addMessage(roomId: string, username: string, text: string, avatar?: string): Promise<void>;
+  addMessage(roomId: string, username: string, text: string, avatar?: string, replyTo?: { id: number, text: string, username: string }): Promise<void>;
   clearMessages(roomId: string): Promise<void>;
-  addToWhitelist(username: string): Promise<void>;
+  addToWhitelist(username: string, avatar?: string): Promise<void>;
   removeFromWhitelist(username: string): Promise<void>;
-  getWhitelist(): Promise<string[]>;
+  getWhitelist(): Promise<{ username: string, avatar: string }[]>;
   isWhitelisted(username: string): Promise<boolean>;
+  getAvatar(username: string): Promise<string | null>;
   
   // Room methods
   createRoom(name: string, createdBy: string): Promise<any>;
   getRooms(username: string): Promise<any[]>;
   addRoomMember(roomId: number, username: string): Promise<void>;
   getRoomMembers(roomId: number): Promise<string[]>;
+  updateRoom(roomId: number, name: string): Promise<void>;
+  updateRoomDriveLink(roomId: number, link: string): Promise<void>;
+  deleteRoom(roomId: number): Promise<void>;
   
   // Doc/Box methods
   createDoc(roomId: number, name: string, content: string, createdBy: string): Promise<any>;
@@ -76,20 +80,43 @@ class SqliteAdapter implements DBAdapter {
     if (!hasAvatar) {
       this.db.exec("ALTER TABLE messages ADD COLUMN avatar TEXT");
     }
+    const hasReplyToId = tableInfo.some((col: any) => col.name === 'reply_to_id');
+    if (!hasReplyToId) {
+      this.db.exec("ALTER TABLE messages ADD COLUMN reply_to_id INTEGER");
+      this.db.exec("ALTER TABLE messages ADD COLUMN reply_to_text TEXT");
+      this.db.exec("ALTER TABLE messages ADD COLUMN reply_to_username TEXT");
+    }
 
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS whitelist (
-        username TEXT PRIMARY KEY
+        username TEXT PRIMARY KEY,
+        avatar TEXT DEFAULT 'user'
       )
     `);
+    
+    // Migration for whitelist avatar
+    const whitelistInfo = this.db.prepare("PRAGMA table_info(whitelist)").all();
+    const hasWhitelistAvatar = whitelistInfo.some((col: any) => col.name === 'avatar');
+    if (!hasWhitelistAvatar) {
+      this.db.exec("ALTER TABLE whitelist ADD COLUMN avatar TEXT DEFAULT 'user'");
+    }
+
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS rooms (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT,
         created_by TEXT,
+        drive_link TEXT,
         timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `);
+    
+    // Migration for drive_link
+    const roomsInfo = this.db.prepare("PRAGMA table_info(rooms)").all();
+    const hasDriveLink = roomsInfo.some((col: any) => col.name === 'drive_link');
+    if (!hasDriveLink) {
+      this.db.exec("ALTER TABLE rooms ADD COLUMN drive_link TEXT");
+    }
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS room_members (
         room_id INTEGER,
@@ -129,16 +156,20 @@ class SqliteAdapter implements DBAdapter {
     return this.db.prepare("SELECT * FROM messages WHERE room_id = ? ORDER BY timestamp DESC LIMIT ?").all(roomId, limit).reverse();
   }
 
-  async addMessage(roomId: string, username: string, text: string, avatar: string = "user") {
-    this.db.prepare("INSERT INTO messages (room_id, username, text, avatar) VALUES (?, ?, ?, ?)").run(roomId, username, text, avatar);
+  async addMessage(roomId: string, username: string, text: string, avatar: string = "user", replyTo?: { id: number, text: string, username: string }) {
+    if (replyTo) {
+      this.db.prepare("INSERT INTO messages (room_id, username, text, avatar, reply_to_id, reply_to_text, reply_to_username) VALUES (?, ?, ?, ?, ?, ?, ?)").run(roomId, username, text, avatar, replyTo.id, replyTo.text, replyTo.username);
+    } else {
+      this.db.prepare("INSERT INTO messages (room_id, username, text, avatar) VALUES (?, ?, ?, ?)").run(roomId, username, text, avatar);
+    }
   }
 
   async clearMessages(roomId: string) {
     this.db.prepare("DELETE FROM messages WHERE room_id = ?").run(roomId);
   }
 
-  async addToWhitelist(username: string) {
-    this.db.prepare("INSERT OR IGNORE INTO whitelist (username) VALUES (?)").run(username);
+  async addToWhitelist(username: string, avatar: string = "user") {
+    this.db.prepare("INSERT OR REPLACE INTO whitelist (username, avatar) VALUES (?, ?)").run(username, avatar);
   }
 
   async removeFromWhitelist(username: string) {
@@ -146,12 +177,17 @@ class SqliteAdapter implements DBAdapter {
   }
 
   async getWhitelist() {
-    return this.db.prepare("SELECT username FROM whitelist").all().map((row: any) => row.username);
+    return this.db.prepare("SELECT username, avatar FROM whitelist").all() as { username: string, avatar: string }[];
   }
 
   async isWhitelisted(username: string) {
     const result = this.db.prepare("SELECT 1 FROM whitelist WHERE username = ?").get(username);
     return !!result;
+  }
+
+  async getAvatar(username: string) {
+    const result = this.db.prepare("SELECT avatar FROM whitelist WHERE username = ?").get(username) as any;
+    return result ? result.avatar : null;
   }
 
   async createRoom(name: string, createdBy: string) {
@@ -179,6 +215,22 @@ class SqliteAdapter implements DBAdapter {
 
   async getRoomMembers(roomId: number) {
     return this.db.prepare("SELECT username FROM room_members WHERE room_id = ?").all(roomId).map((row: any) => row.username);
+  }
+
+  async updateRoom(roomId: number, name: string) {
+    this.db.prepare("UPDATE rooms SET name = ? WHERE id = ?").run(name, roomId);
+  }
+
+  async updateRoomDriveLink(roomId: number, link: string) {
+    this.db.prepare("UPDATE rooms SET drive_link = ? WHERE id = ?").run(link, roomId);
+  }
+
+  async deleteRoom(roomId: number) {
+    this.db.prepare("DELETE FROM messages WHERE room_id = ?").run(roomId.toString());
+    this.db.prepare("DELETE FROM room_members WHERE room_id = ?").run(roomId);
+    this.db.prepare("DELETE FROM notes WHERE doc_id IN (SELECT id FROM docs WHERE room_id = ?)").run(roomId);
+    this.db.prepare("DELETE FROM docs WHERE room_id = ?").run(roomId);
+    this.db.prepare("DELETE FROM rooms WHERE id = ?").run(roomId);
   }
 
   async createDoc(roomId: number, name: string, content: string, createdBy: string) {
@@ -266,20 +318,28 @@ class PostgresAdapter implements DBAdapter {
     // Migration for existing Postgres tables
     await this.pool.query("ALTER TABLE messages ADD COLUMN IF NOT EXISTS room_id TEXT DEFAULT 'general'");
     await this.pool.query("ALTER TABLE messages ADD COLUMN IF NOT EXISTS avatar TEXT");
+    await this.pool.query("ALTER TABLE messages ADD COLUMN IF NOT EXISTS reply_to_id INTEGER");
+    await this.pool.query("ALTER TABLE messages ADD COLUMN IF NOT EXISTS reply_to_text TEXT");
+    await this.pool.query("ALTER TABLE messages ADD COLUMN IF NOT EXISTS reply_to_username TEXT");
 
     await this.pool.query(`
       CREATE TABLE IF NOT EXISTS whitelist (
-        username TEXT PRIMARY KEY
+        username TEXT PRIMARY KEY,
+        avatar TEXT DEFAULT 'user'
       )
     `);
+    await this.pool.query("ALTER TABLE whitelist ADD COLUMN IF NOT EXISTS avatar TEXT DEFAULT 'user'");
+
     await this.pool.query(`
       CREATE TABLE IF NOT EXISTS rooms (
         id SERIAL PRIMARY KEY,
         name TEXT,
         created_by TEXT,
+        drive_link TEXT,
         timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
+    await this.pool.query("ALTER TABLE rooms ADD COLUMN IF NOT EXISTS drive_link TEXT");
     await this.pool.query(`
       CREATE TABLE IF NOT EXISTS room_members (
         room_id INTEGER,
@@ -319,16 +379,20 @@ class PostgresAdapter implements DBAdapter {
     return result.rows.reverse();
   }
 
-  async addMessage(roomId: string, username: string, text: string, avatar: string = "user") {
-    await this.pool.query("INSERT INTO messages (room_id, username, text, avatar) VALUES ($1, $2, $3, $4)", [roomId, username, text, avatar]);
+  async addMessage(roomId: string, username: string, text: string, avatar: string = "user", replyTo?: { id: number, text: string, username: string }) {
+    if (replyTo) {
+      await this.pool.query("INSERT INTO messages (room_id, username, text, avatar, reply_to_id, reply_to_text, reply_to_username) VALUES ($1, $2, $3, $4, $5, $6, $7)", [roomId, username, text, avatar, replyTo.id, replyTo.text, replyTo.username]);
+    } else {
+      await this.pool.query("INSERT INTO messages (room_id, username, text, avatar) VALUES ($1, $2, $3, $4)", [roomId, username, text, avatar]);
+    }
   }
 
   async clearMessages(roomId: string) {
     await this.pool.query("DELETE FROM messages WHERE room_id = $1", [roomId]);
   }
 
-  async addToWhitelist(username: string) {
-    await this.pool.query("INSERT INTO whitelist (username) VALUES ($1) ON CONFLICT (username) DO NOTHING", [username]);
+  async addToWhitelist(username: string, avatar: string = "user") {
+    await this.pool.query("INSERT INTO whitelist (username, avatar) VALUES ($1, $2) ON CONFLICT (username) DO UPDATE SET avatar = $2", [username, avatar]);
   }
 
   async removeFromWhitelist(username: string) {
@@ -336,13 +400,18 @@ class PostgresAdapter implements DBAdapter {
   }
 
   async getWhitelist() {
-    const result = await this.pool.query("SELECT username FROM whitelist");
-    return result.rows.map((row: any) => row.username);
+    const result = await this.pool.query("SELECT username, avatar FROM whitelist");
+    return result.rows.map((row: any) => ({ username: row.username, avatar: row.avatar }));
   }
 
   async isWhitelisted(username: string) {
     const result = await this.pool.query("SELECT 1 FROM whitelist WHERE username = $1", [username]);
     return result.rows.length > 0;
+  }
+
+  async getAvatar(username: string) {
+    const result = await this.pool.query("SELECT avatar FROM whitelist WHERE username = $1", [username]);
+    return result.rows[0]?.avatar || null;
   }
 
   async createRoom(name: string, createdBy: string) {
@@ -372,6 +441,22 @@ class PostgresAdapter implements DBAdapter {
   async getRoomMembers(roomId: number) {
     const result = await this.pool.query("SELECT username FROM room_members WHERE room_id = $1", [roomId]);
     return result.rows.map((row: any) => row.username);
+  }
+
+  async updateRoom(roomId: number, name: string) {
+    await this.pool.query("UPDATE rooms SET name = $1 WHERE id = $2", [name, roomId]);
+  }
+
+  async updateRoomDriveLink(roomId: number, link: string) {
+    await this.pool.query("UPDATE rooms SET drive_link = $1 WHERE id = $2", [link, roomId]);
+  }
+
+  async deleteRoom(roomId: number) {
+    await this.pool.query("DELETE FROM messages WHERE room_id = $1", [roomId.toString()]);
+    await this.pool.query("DELETE FROM room_members WHERE room_id = $1", [roomId]);
+    await this.pool.query("DELETE FROM notes WHERE doc_id IN (SELECT id FROM docs WHERE room_id = $1)", [roomId]);
+    await this.pool.query("DELETE FROM docs WHERE room_id = $1", [roomId]);
+    await this.pool.query("DELETE FROM rooms WHERE id = $1", [roomId]);
   }
 
   async createDoc(roomId: number, name: string, content: string, createdBy: string) {
@@ -470,19 +555,29 @@ async function startServer() {
 
     socket.on("join", async (data: string | { username: string, avatar: string }) => {
       let username = "";
-      let avatar = "user";
+      let inputAvatar = "user";
 
       if (typeof data === "string") {
         username = data;
       } else {
         username = data.username;
-        avatar = data.avatar || "user";
+        inputAvatar = data.avatar || "user";
       }
 
       const isWhitelisted = await db.isWhitelisted(username);
       if (!isWhitelisted && username !== ADMIN_USER) {
         socket.emit("error", "Bạn không có trong danh sách được phép tham gia. Vui lòng liên hệ admin dongtran2699.");
         return;
+      }
+
+      // Get avatar from whitelist if available
+      let avatar = inputAvatar;
+      const dbAvatar = await db.getAvatar(username);
+      if (dbAvatar) {
+        avatar = dbAvatar;
+      } else if (username === ADMIN_USER) {
+        // Ensure admin is in whitelist with avatar if not already
+        await db.addToWhitelist(ADMIN_USER, inputAvatar);
       }
 
       // Ensure user is in General room
@@ -508,16 +603,18 @@ async function startServer() {
       const docs = await db.getDocs(generalRoomId);
       socket.emit("docsUpdate", docs);
 
+      const roomMembers = await db.getRoomMembers(generalRoomId);
+      socket.emit("roomMembers", roomMembers);
+
       if (username === ADMIN_USER) {
         const whitelist = await db.getWhitelist();
         socket.emit("whitelistUpdate", whitelist);
       }
 
       // Broadcast user list for general
-      const generalUsers = Array.from(activeUsers.values())
-        .filter(u => u.roomId === roomId)
-        .map(u => ({ username: u.username, avatar: u.avatar }));
-      io.to(roomId).emit("userList", generalUsers);
+      const generalUsers = Array.from(activeUsers.values()).filter(u => u.roomId === roomId);
+      const uniqueGeneralUsers = Array.from(new Map(generalUsers.map(u => [u.username, { username: u.username, avatar: u.avatar }])).values());
+      io.to(roomId).emit("userList", uniqueGeneralUsers);
     });
 
     socket.on("switchRoom", async (roomId: string) => {
@@ -538,10 +635,48 @@ async function startServer() {
       socket.emit("roomMembers", roomMembers);
 
       // Broadcast user list for new room
-      const roomUsers = Array.from(activeUsers.values())
-        .filter(u => u.roomId === roomId)
-        .map(u => ({ username: u.username, avatar: u.avatar }));
-      io.to(roomId).emit("userList", roomUsers);
+      const roomUsers = Array.from(activeUsers.values()).filter(u => u.roomId === roomId);
+      const uniqueRoomUsers = Array.from(new Map(roomUsers.map(u => [u.username, { username: u.username, avatar: u.avatar }])).values());
+      io.to(roomId).emit("userList", uniqueRoomUsers);
+    });
+
+    socket.on("deleteRoom", async (roomId: number) => {
+      const user = activeUsers.get(socket.id);
+      if (!user || user.username !== ADMIN_USER) {
+        socket.emit("error", "Bạn không có quyền xóa phòng này.");
+        return;
+      }
+      
+      const generalRoomId = await db.getGeneralRoomId();
+      if (roomId === generalRoomId) {
+        socket.emit("error", "Không thể xóa phòng General.");
+        return;
+      }
+
+      await db.deleteRoom(roomId);
+      
+      // Notify all users in that room to switch to General
+      const roomUsers = Array.from(activeUsers.values()).filter(u => u.roomId === roomId.toString());
+      for (const u of roomUsers) {
+        // Find socket id for user
+        for (const [sid, user] of activeUsers.entries()) {
+          if (user.username === u.username) {
+            io.to(sid).emit("roomDeleted", generalRoomId);
+            // Also update their room list
+            const rooms = await db.getRooms(u.username);
+            io.to(sid).emit("roomsUpdate", rooms);
+          }
+        }
+      }
+      
+      // Update room list for everyone else (admin sees all rooms)
+      const allRooms = await db.getRooms(ADMIN_USER);
+      // Broadcast to admin sockets
+      for (const [sid, u] of activeUsers.entries()) {
+        if (u.username === ADMIN_USER) {
+           io.to(sid).emit("roomsUpdate", allRooms);
+        }
+      }
     });
 
     socket.on("createRoom", async (name: string) => {
@@ -551,6 +686,45 @@ async function startServer() {
       const room = await db.createRoom(name, user.username);
       const rooms = await db.getRooms(user.username);
       socket.emit("roomsUpdate", rooms);
+    });
+
+    socket.on("updateRoom", async ({ roomId, name }: { roomId: number, name: string }) => {
+      const user = activeUsers.get(socket.id);
+      if (!user || user.username !== ADMIN_USER) {
+        socket.emit("error", "Bạn không có quyền sửa tên phòng.");
+        return;
+      }
+      
+      const generalRoomId = await db.getGeneralRoomId();
+      if (roomId === generalRoomId) {
+        socket.emit("error", "Không thể sửa tên phòng General.");
+        return;
+      }
+
+      await db.updateRoom(roomId, name);
+      
+      // Update room list for everyone
+      // We need to iterate all users and send them their room list
+      for (const [sid, u] of activeUsers.entries()) {
+        const rooms = await db.getRooms(u.username);
+        io.to(sid).emit("roomsUpdate", rooms);
+        
+        // If user is in this room, update the room name in their UI if needed (client usually updates from rooms list)
+        // But we might want to emit a specific event or just rely on roomsUpdate
+      }
+    });
+
+    socket.on("updateRoomDriveLink", async ({ roomId, link }: { roomId: number, link: string }) => {
+      const user = activeUsers.get(socket.id);
+      if (!user || user.username !== ADMIN_USER) return;
+
+      await db.updateRoomDriveLink(roomId, link);
+      
+      // Update room list for everyone
+      for (const [sid, u] of activeUsers.entries()) {
+        const rooms = await db.getRooms(u.username);
+        io.to(sid).emit("roomsUpdate", rooms);
+      }
     });
 
     socket.on("addRoomMember", async ({ roomId, username }: { roomId: number, username: string }) => {
@@ -640,18 +814,31 @@ async function startServer() {
       }
     });
 
-    socket.on("sendMessage", async (text: string) => {
+    socket.on("sendMessage", async (data: string | { text: string, replyTo?: { id: number, text: string, username: string } }) => {
       const user = activeUsers.get(socket.id);
       if (!user) return;
+
+      let text = "";
+      let replyTo;
+
+      if (typeof data === "string") {
+        text = data;
+      } else {
+        text = data.text;
+        replyTo = data.replyTo;
+      }
 
       const message = {
         username: user.username,
         text,
         avatar: user.avatar,
         timestamp: new Date().toISOString(),
+        reply_to_id: replyTo?.id,
+        reply_to_text: replyTo?.text,
+        reply_to_username: replyTo?.username,
       };
 
-      await db.addMessage(user.roomId, user.username, text, user.avatar);
+      await db.addMessage(user.roomId, user.username, text, user.avatar, replyTo);
       io.to(user.roomId).emit("message", message);
     });
 
@@ -672,11 +859,24 @@ async function startServer() {
       socket.to(user.roomId).emit("typingUpdate", Array.from(roomTyping));
     });
 
-    socket.on("addMember", async (name: string) => {
+    socket.on("addMember", async ({ username, avatar }: { username: string, avatar: string }) => {
       if (activeUsers.get(socket.id)?.username === ADMIN_USER) {
-        await db.addToWhitelist(name);
+        await db.addToWhitelist(username, avatar);
         const list = await db.getWhitelist();
         socket.emit("whitelistUpdate", list);
+
+        // Update active user if online
+        for (const [sid, u] of activeUsers.entries()) {
+          if (u.username === username) {
+            u.avatar = avatar;
+            activeUsers.set(sid, u);
+            
+            // Broadcast updated user list to the room they are in
+            const roomUsers = Array.from(activeUsers.values()).filter(user => user.roomId === u.roomId);
+            const uniqueRoomUsers = Array.from(new Map(roomUsers.map(user => [user.username, { username: user.username, avatar: user.avatar }])).values());
+            io.to(u.roomId).emit("userList", uniqueRoomUsers);
+          }
+        }
       }
     });
 
@@ -719,10 +919,9 @@ async function startServer() {
           io.to(user.roomId).emit("typingUpdate", Array.from(roomTyping));
         }
         
-        const roomUsers = Array.from(activeUsers.values())
-          .filter(u => u.roomId === user.roomId)
-          .map(u => ({ username: u.username, avatar: u.avatar }));
-        io.to(user.roomId).emit("userList", roomUsers);
+        const roomUsers = Array.from(activeUsers.values()).filter(u => u.roomId === user.roomId);
+        const uniqueRoomUsers = Array.from(new Map(roomUsers.map(u => [u.username, { username: u.username, avatar: u.avatar }])).values());
+        io.to(user.roomId).emit("userList", uniqueRoomUsers);
       }
     });
   });
