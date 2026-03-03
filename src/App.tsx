@@ -129,6 +129,8 @@ export default function App() {
     }
 
     const SOCKET_URL = import.meta.env.VITE_API_URL || undefined;
+    console.log("Initializing socket connection to:", SOCKET_URL || "default host");
+    
     const newSocket = io(SOCKET_URL, {
       reconnection: true,
       reconnectionAttempts: 10,
@@ -137,26 +139,31 @@ export default function App() {
     setSocket(newSocket);
 
     newSocket.on("connect", () => {
+      console.log("Socket connected:", newSocket.id);
       setIsConnected(true);
       setIsConnecting(false);
       const currentUname = localStorage.getItem("chat_username");
       const currentAvatar = localStorage.getItem("chat_avatar") || "user";
       if (currentUname) {
+        console.log("Auto-joining as:", currentUname);
         newSocket.emit("join", { username: currentUname, avatar: currentAvatar });
       }
     });
 
-    newSocket.on("disconnect", () => {
+    newSocket.on("disconnect", (reason) => {
+      console.log("Socket disconnected:", reason);
       setIsConnected(false);
       setIsConnecting(false);
     });
 
-    newSocket.on("connect_error", () => {
+    newSocket.on("connect_error", (err) => {
+      console.error("Socket connection error:", err);
       setIsConnected(false);
       setIsConnecting(false);
     });
 
-    newSocket.on("reconnect_attempt", () => {
+    newSocket.on("reconnect_attempt", (attempt) => {
+      console.log("Socket reconnect attempt:", attempt);
       setIsConnecting(true);
     });
 

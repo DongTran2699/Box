@@ -532,26 +532,29 @@ if (process.env.DATABASE_URL) {
 }
 
 async function startServer() {
-  await db.init();
+  try {
+    console.log("Initializing database...");
+    await db.init();
+    console.log("Database initialized successfully.");
 
-  const app = express();
-  const httpServer = createServer(app);
-  const io = new Server(httpServer, {
-    cors: {
-      origin: "*",
-    },
-    connectionStateRecovery: {
-      maxDisconnectionDuration: 2 * 60 * 1000,
-      skipMiddlewares: true,
-    },
-  });
+    const app = express();
+    const httpServer = createServer(app);
+    const io = new Server(httpServer, {
+      cors: {
+        origin: "*",
+      },
+      connectionStateRecovery: {
+        maxDisconnectionDuration: 2 * 60 * 1000,
+        skipMiddlewares: true,
+      },
+    });
 
-  // State
-  let activeUsers = new Map<string, { username: string, roomId: string, avatar: string }>(); // socketId -> { username, roomId, avatar }
-  let typingUsers = new Map<string, Set<string>>(); // roomId -> Set of usernames
+    // State
+    let activeUsers = new Map<string, { username: string, roomId: string, avatar: string }>(); // socketId -> { username, roomId, avatar }
+    let typingUsers = new Map<string, Set<string>>(); // roomId -> Set of usernames
 
-  io.on("connection", (socket) => {
-    console.log("A user connected:", socket.id);
+    io.on("connection", (socket) => {
+      console.log("A user connected:", socket.id);
 
     socket.on("join", async (data: string | { username: string, avatar: string }) => {
       let username = "";
@@ -942,6 +945,10 @@ async function startServer() {
   httpServer.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
   });
+  } catch (error) {
+    console.error("Failed to start server:", error);
+    process.exit(1);
+  }
 }
 
 startServer();
