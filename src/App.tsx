@@ -156,6 +156,12 @@ export default function App() {
       }
     });
 
+    newSocket.on("docDeleted", (docId: number) => {
+      if (currentBoxRef.current?.id === docId) {
+        setCurrentBox(null);
+      }
+    });
+
     newSocket.on("whitelistUpdate", (list: string[]) => {
       setWhitelist(list);
     });
@@ -242,6 +248,12 @@ export default function App() {
         content: doc.content 
       });
       setEditingDoc(null);
+    }
+  };
+
+  const handleDeleteDoc = (docId: number) => {
+    if (socket && currentRoom && confirm("Xóa Box này và toàn bộ ghi chú bên trong?")) {
+      socket.emit("deleteDoc", { docId, roomId: currentRoom.id });
     }
   };
 
@@ -728,18 +740,22 @@ export default function App() {
                         <div className="flex justify-between items-start mb-2">
                           <span className="text-[10px] font-bold text-zinc-400 uppercase">{note.created_by}</span>
                           <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button 
-                              onClick={() => setEditingNote(note)}
-                              className="p-1 text-zinc-400 hover:text-indigo-600 rounded"
-                            >
-                              <Edit3 size={14} />
-                            </button>
-                            <button 
-                              onClick={() => handleDeleteNote(note.id)}
-                              className="p-1 text-zinc-400 hover:text-red-600 rounded"
-                            >
-                              <Trash2 size={14} />
-                            </button>
+                            {(note.created_by === username || username === ADMIN_USER) && (
+                              <>
+                                <button 
+                                  onClick={() => setEditingNote(note)}
+                                  className="p-1 text-zinc-400 hover:text-indigo-600 rounded"
+                                >
+                                  <Edit3 size={14} />
+                                </button>
+                                <button 
+                                  onClick={() => handleDeleteNote(note.id)}
+                                  className="p-1 text-zinc-400 hover:text-red-600 rounded"
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              </>
+                            )}
                           </div>
                         </div>
                         <p className="text-sm text-zinc-800 whitespace-pre-wrap">{note.content}</p>
@@ -809,15 +825,30 @@ export default function App() {
                             </div>
                             <h4 className="font-bold text-zinc-900 truncate max-w-[150px]">{doc.name}</h4>
                           </div>
-                          <button 
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setEditingDoc(doc);
-                            }}
-                            className="p-1.5 text-zinc-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg opacity-0 group-hover:opacity-100 transition-all"
-                          >
-                            <Edit3 size={14} />
-                          </button>
+                          <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                            {(doc.created_by === username || username === ADMIN_USER) && (
+                              <>
+                                <button 
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setEditingDoc(doc);
+                                  }}
+                                  className="p-1.5 text-zinc-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"
+                                >
+                                  <Edit3 size={14} />
+                                </button>
+                                <button 
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleDeleteDoc(doc.id);
+                                  }}
+                                  className="p-1.5 text-zinc-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              </>
+                            )}
+                          </div>
                         </div>
                         <div className="text-sm text-zinc-600 line-clamp-2 mb-4">
                           {doc.content || "Không có mô tả"}

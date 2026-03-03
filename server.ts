@@ -35,12 +35,13 @@ interface DBAdapter {
   createDoc(roomId: number, name: string, content: string, createdBy: string): Promise<any>;
   getDocs(roomId: number): Promise<any[]>;
   updateDoc(docId: number, content: string): Promise<void>;
+  deleteDoc(docId: number, username: string): Promise<boolean>;
 
   // Note methods
   createNote(docId: number, content: string, createdBy: string): Promise<any>;
   getNotes(docId: number): Promise<any[]>;
-  updateNote(noteId: number, content: string): Promise<void>;
-  deleteNote(noteId: number): Promise<void>;
+  updateNote(noteId: number, content: string, username: string): Promise<boolean>;
+  deleteNote(noteId: number, username: string): Promise<boolean>;
   
   // Helper
   getGeneralRoomId(): Promise<number>;
@@ -193,6 +194,20 @@ class SqliteAdapter implements DBAdapter {
     this.db.prepare("UPDATE docs SET content = ? WHERE id = ?").run(content, docId);
   }
 
+  async deleteDoc(docId: number, username: string) {
+    if (username === ADMIN_USER) {
+      this.db.prepare("DELETE FROM docs WHERE id = ?").run(docId);
+      this.db.prepare("DELETE FROM notes WHERE doc_id = ?").run(docId);
+      return true;
+    }
+    const result = this.db.prepare("DELETE FROM docs WHERE id = ? AND created_by = ?").run(docId, username);
+    if (result.changes > 0) {
+      this.db.prepare("DELETE FROM notes WHERE doc_id = ?").run(docId);
+      return true;
+    }
+    return false;
+  }
+
   async createNote(docId: number, content: string, createdBy: string) {
     const result = this.db.prepare("INSERT INTO notes (doc_id, content, created_by) VALUES (?, ?, ?)").run(docId, content, createdBy);
     return { id: result.lastInsertRowid, doc_id: docId, content, created_by: createdBy, timestamp: new Date().toISOString() };
@@ -202,12 +217,22 @@ class SqliteAdapter implements DBAdapter {
     return this.db.prepare("SELECT * FROM notes WHERE doc_id = ? ORDER BY timestamp DESC").all(docId);
   }
 
-  async updateNote(noteId: number, content: string) {
-    this.db.prepare("UPDATE notes SET content = ? WHERE id = ?").run(content, noteId);
+  async updateNote(noteId: number, content: string, username: string) {
+    if (username === ADMIN_USER) {
+       this.db.prepare("UPDATE notes SET content = ? WHERE id = ?").run(content, noteId);
+       return true;
+    }
+    const result = this.db.prepare("UPDATE notes SET content = ? WHERE id = ? AND created_by = ?").run(content, noteId, username);
+    return result.changes > 0;
   }
 
-  async deleteNote(noteId: number) {
-    this.db.prepare("DELETE FROM notes WHERE id = ?").run(noteId);
+  async deleteNote(noteId: number, username: string) {
+    if (username === ADMIN_USER) {
+      this.db.prepare("DELETE FROM notes WHERE id = ?").run(noteId);
+      return true;
+    }
+    const result = this.db.prepare("DELETE FROM notes WHERE id = ? AND created_by = ?").run(noteId, username);
+    return result.changes > 0;
   }
 
   async getGeneralRoomId() {
@@ -363,6 +388,20 @@ class PostgresAdapter implements DBAdapter {
     await this.pool.query("UPDATE docs SET content = $1 WHERE id = $2", [content, docId]);
   }
 
+  async deleteDoc(docId: number, username: string) {
+    if (username === ADMIN_USER) {
+      await this.pool.query("DELETE FROM docs WHERE id = $1", [docId]);
+      await this.pool.query("DELETE FROM notes WHERE doc_id = $1", [docId]);
+      return true;
+    }
+    const result = await this.pool.query("DELETE FROM docs WHERE id = $1 AND created_by = $2", [docId, username]);
+    if (result.rowCount && result.rowCount > 0) {
+      await this.pool.query("DELETE FROM notes WHERE doc_id = $1", [docId]);
+      return true;
+    }
+    return false;
+  }
+
   async createNote(docId: number, content: string, createdBy: string) {
     const result = await this.pool.query("INSERT INTO notes (doc_id, content, created_by) VALUES ($1, $2, $3) RETURNING id", [docId, content, createdBy]);
     return { id: result.rows[0].id, doc_id: docId, content, created_by: createdBy, timestamp: new Date().toISOString() };
@@ -373,12 +412,22 @@ class PostgresAdapter implements DBAdapter {
     return result.rows;
   }
 
-  async updateNote(noteId: number, content: string) {
-    await this.pool.query("UPDATE notes SET content = $1 WHERE id = $2", [content, noteId]);
+  async updateNote(noteId: number, content: string, username: string) {
+    if (username === ADMIN_USER) {
+      await this.pool.query("UPDATE notes SET content = $1 WHERE id = $2", [content, noteId]);
+      return true;
+    }
+    const result = await this.pool.query("UPDATE notes SET content = $1 WHERE id = $2 AND created_by = $3", [content, noteId, username]);
+    return (result.rowCount || 0) > 0;
   }
 
-  async deleteNote(noteId: number) {
-    await this.pool.query("DELETE FROM notes WHERE id = $1", [noteId]);
+  async deleteNote(noteId: number, username: string) {
+    if (username === ADMIN_USER) {
+      await this.pool.query("DELETE FROM notes WHERE id = $1", [noteId]);
+      return true;
+    }
+    const result = await this.pool.query("DELETE FROM notes WHERE id = $1 AND created_by = $2", [noteId, username]);
+    return (result.rowCount || 0) > 0;
   }
 
   async getGeneralRoomId() {
@@ -557,17 +606,38 @@ async function startServer() {
     socket.on("updateNote", async ({ noteId, docId, content }: { noteId: number, docId: number, content: string }) => {
       const user = activeUsers.get(socket.id);
       if (!user) return;
-      await db.updateNote(noteId, content);
-      const notes = await db.getNotes(docId);
-      io.to(user.roomId).emit("notesUpdate", { docId, notes });
+      const success = await db.updateNote(noteId, content, user.username);
+      if (success) {
+        const notes = await db.getNotes(docId);
+        io.to(user.roomId).emit("notesUpdate", { docId, notes });
+      } else {
+        socket.emit("error", "Bạn không có quyền chỉnh sửa ghi chú này.");
+      }
     });
 
     socket.on("deleteNote", async ({ noteId, docId }: { noteId: number, docId: number }) => {
       const user = activeUsers.get(socket.id);
       if (!user) return;
-      await db.deleteNote(noteId);
-      const notes = await db.getNotes(docId);
-      io.to(user.roomId).emit("notesUpdate", { docId, notes });
+      const success = await db.deleteNote(noteId, user.username);
+      if (success) {
+        const notes = await db.getNotes(docId);
+        io.to(user.roomId).emit("notesUpdate", { docId, notes });
+      } else {
+        socket.emit("error", "Bạn không có quyền xóa ghi chú này.");
+      }
+    });
+
+    socket.on("deleteDoc", async ({ docId, roomId }: { docId: number, roomId: number }) => {
+      const user = activeUsers.get(socket.id);
+      if (!user) return;
+      const success = await db.deleteDoc(docId, user.username);
+      if (success) {
+        const docs = await db.getDocs(roomId);
+        io.to(roomId.toString()).emit("docsUpdate", docs);
+        io.to(roomId.toString()).emit("docDeleted", docId);
+      } else {
+        socket.emit("error", "Bạn không có quyền xóa Box này.");
+      }
     });
 
     socket.on("sendMessage", async (text: string) => {
