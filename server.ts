@@ -603,7 +603,7 @@ async function startServer() {
       const rooms = await db.getRooms(username);
       socket.emit("roomsUpdate", rooms);
 
-      const history = await db.getMessages(roomId, 50);
+      const history = await db.getMessages(roomId, 500);
       socket.emit("history", { roomId, history });
 
       // Send docs for general room
@@ -632,7 +632,7 @@ async function startServer() {
       user.roomId = roomId;
       socket.join(roomId);
 
-      const history = await db.getMessages(roomId, 50);
+      const history = await db.getMessages(roomId, 500);
       socket.emit("history", { roomId, history });
 
       const docs = await db.getDocs(parseInt(roomId) || 0);

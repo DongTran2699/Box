@@ -85,6 +85,7 @@ export default function App() {
   const [isConnecting, setIsConnecting] = useState(true);
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [windowWidth, setWindowWidth] = useState(typeof window !== 'undefined' ? window.innerWidth : 1024);
   const [activeTab, setActiveTab] = useState<"chat" | "docs">("chat");
   const [allRoomMembers, setAllRoomMembers] = useState<string[]>([]);
   const [isDarkMode, setIsDarkMode] = useState(() => {
@@ -93,6 +94,12 @@ export default function App() {
     }
     return false;
   });
+
+  useEffect(() => {
+    const handleResize = () => setWindowWidth(window.innerWidth);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   useEffect(() => {
     if (isDarkMode) {
@@ -281,7 +288,7 @@ export default function App() {
   }, []); // Removed dependency on currentRoom
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages, typingUsers]);
 
   const AVATARS = [
@@ -504,9 +511,9 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950 flex flex-col md:flex-row h-screen overflow-hidden font-sans transition-colors duration-300">
+    <div className="fixed inset-0 bg-zinc-50 dark:bg-zinc-950 flex flex-col md:flex-row h-[100dvh] overflow-hidden font-sans transition-colors duration-300">
       {/* Mobile Header */}
-      <div className="md:hidden h-14 bg-white dark:bg-zinc-900 border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between px-4 z-30">
+      <div className="md:hidden h-14 bg-white/80 dark:bg-zinc-900/80 backdrop-blur-md border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between px-4 z-30 flex-shrink-0">
         <button onClick={() => setIsSidebarOpen(true)} className="p-2 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-lg">
           <Menu size={20} />
         </button>
@@ -533,9 +540,15 @@ export default function App() {
       </AnimatePresence>
 
       {/* Sidebar */}
-      <motion.div 
-        className={`fixed md:relative inset-y-0 left-0 w-72 md:w-80 bg-white dark:bg-zinc-900 border-r border-zinc-200 dark:border-zinc-800 flex flex-col shadow-sm z-50 transition-transform md:translate-x-0 ${isSidebarOpen ? "translate-x-0" : "-translate-x-full"}`}
-      >
+      <AnimatePresence>
+        {(isSidebarOpen || windowWidth >= 768) && (
+          <motion.div 
+            initial={windowWidth < 768 ? { x: -320 } : false}
+            animate={{ x: 0 }}
+            exit={{ x: -320 }}
+            transition={{ type: "spring", damping: 25, stiffness: 200 }}
+            className="fixed md:relative inset-y-0 left-0 w-72 md:w-80 bg-white dark:bg-zinc-900 border-r border-zinc-200 dark:border-zinc-800 flex flex-col shadow-sm z-50 md:translate-x-0"
+          >
         <div className="p-6 border-b border-zinc-100 dark:border-zinc-800 flex items-center justify-between bg-white dark:bg-zinc-900">
           <div className="flex items-center gap-2.5">
             <div className="w-9 h-9 bg-indigo-600 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-100 dark:shadow-none">
@@ -690,11 +703,13 @@ export default function App() {
           </div>
         </div>
       </motion.div>
+    )}
+  </AnimatePresence>
 
       {/* Main Content Area */}
-      <div className="flex-1 flex flex-col bg-white dark:bg-zinc-900 relative h-full transition-colors duration-300">
+      <div className="flex-1 flex flex-col bg-white dark:bg-zinc-900 relative h-full overflow-hidden transition-colors duration-300">
         {/* Header */}
-        <div className="h-16 border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between px-6 bg-white/90 dark:bg-zinc-900/90 backdrop-blur-xl sticky top-0 z-10">
+        <div className="h-16 border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between px-4 md:px-6 bg-white/90 dark:bg-zinc-900/90 backdrop-blur-xl sticky top-0 z-10 flex-shrink-0">
           <div className="flex items-center gap-3 overflow-hidden">
             <div className="w-10 h-10 rounded-2xl bg-indigo-50 dark:bg-indigo-900/20 flex items-center justify-center flex-shrink-0">
               <Hash size={20} className="text-indigo-600 dark:text-indigo-400" />
@@ -793,7 +808,7 @@ export default function App() {
           {activeTab === "chat" ? (
             <>
               {/* Messages */}
-              <div className="flex-1 overflow-y-auto p-3 md:p-6 space-y-4 md:space-y-6 bg-zinc-50/30 dark:bg-zinc-950/30 custom-scrollbar">
+              <div className="flex-1 overflow-y-auto p-3 md:p-6 space-y-4 md:space-y-6 bg-zinc-50/30 dark:bg-zinc-950/30 custom-scrollbar overscroll-contain">
                 <AnimatePresence initial={false}>
                   {messages.map((msg, i) => {
                     const isSystem = msg.username === "System";
@@ -873,7 +888,7 @@ export default function App() {
               </div>
 
               {/* Input */}
-              <div className="p-3 md:p-6 bg-white dark:bg-zinc-900 border-t border-zinc-200 dark:border-zinc-800">
+              <div className="p-3 md:p-6 bg-white dark:bg-zinc-900 border-t border-zinc-200 dark:border-zinc-800 flex-shrink-0">
                 {replyingTo && (
                   <div className="flex items-center justify-between bg-zinc-50 dark:bg-zinc-800 p-3 rounded-t-2xl border-x border-t border-zinc-200 dark:border-zinc-700 mb-[-1px] relative z-10">
                     <div className="flex items-center gap-2 overflow-hidden">
