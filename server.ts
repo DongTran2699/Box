@@ -18,7 +18,7 @@ const ADMIN_USER = "dongtran2699";
 interface DBAdapter {
   init(): Promise<void>;
   getMessages(roomId: string, limit: number): Promise<any[]>;
-  addMessage(roomId: string, username: string, text: string, avatar?: string, replyTo?: { id: number, text: string, username: string }): Promise<void>;
+  addMessage(roomId: string, username: string, text: string, avatar?: string, replyTo?: { id: number, text: string, username: string }): Promise<any>;
   clearMessages(roomId: string): Promise<void>;
   addToWhitelist(username: string, avatar?: string): Promise<void>;
   removeFromWhitelist(username: string): Promise<void>;
@@ -157,11 +157,13 @@ class SqliteAdapter implements DBAdapter {
   }
 
   async addMessage(roomId: string, username: string, text: string, avatar: string = "user", replyTo?: { id: number, text: string, username: string }) {
+    let result;
     if (replyTo) {
-      this.db.prepare("INSERT INTO messages (room_id, username, text, avatar, reply_to_id, reply_to_text, reply_to_username) VALUES (?, ?, ?, ?, ?, ?, ?)").run(roomId, username, text, avatar, replyTo.id, replyTo.text, replyTo.username);
+      result = this.db.prepare("INSERT INTO messages (room_id, username, text, avatar, reply_to_id, reply_to_text, reply_to_username) VALUES (?, ?, ?, ?, ?, ?, ?)").run(roomId, username, text, avatar, replyTo.id, replyTo.text, replyTo.username);
     } else {
-      this.db.prepare("INSERT INTO messages (room_id, username, text, avatar) VALUES (?, ?, ?, ?)").run(roomId, username, text, avatar);
+      result = this.db.prepare("INSERT INTO messages (room_id, username, text, avatar) VALUES (?, ?, ?, ?)").run(roomId, username, text, avatar);
     }
+    return { id: result.lastInsertRowid };
   }
 
   async clearMessages(roomId: string) {
@@ -380,11 +382,13 @@ class PostgresAdapter implements DBAdapter {
   }
 
   async addMessage(roomId: string, username: string, text: string, avatar: string = "user", replyTo?: { id: number, text: string, username: string }) {
+    let result;
     if (replyTo) {
-      await this.pool.query("INSERT INTO messages (room_id, username, text, avatar, reply_to_id, reply_to_text, reply_to_username) VALUES ($1, $2, $3, $4, $5, $6, $7)", [roomId, username, text, avatar, replyTo.id, replyTo.text, replyTo.username]);
+      result = await this.pool.query("INSERT INTO messages (room_id, username, text, avatar, reply_to_id, reply_to_text, reply_to_username) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id", [roomId, username, text, avatar, replyTo.id, replyTo.text, replyTo.username]);
     } else {
-      await this.pool.query("INSERT INTO messages (room_id, username, text, avatar) VALUES ($1, $2, $3, $4)", [roomId, username, text, avatar]);
+      result = await this.pool.query("INSERT INTO messages (room_id, username, text, avatar) VALUES ($1, $2, $3, $4) RETURNING id", [roomId, username, text, avatar]);
     }
+    return { id: result.rows[0].id };
   }
 
   async clearMessages(roomId: string) {
@@ -596,11 +600,11 @@ async function startServer() {
       // So we should add them to General if not already.
       await db.addRoomMember(generalRoomId, username);
 
-      const history = await db.getMessages(roomId, 50);
-      socket.emit("history", history);
-      
       const rooms = await db.getRooms(username);
       socket.emit("roomsUpdate", rooms);
+
+      const history = await db.getMessages(roomId, 50);
+      socket.emit("history", { roomId, history });
 
       // Send docs for general room
       const docs = await db.getDocs(generalRoomId);
@@ -629,7 +633,7 @@ async function startServer() {
       socket.join(roomId);
 
       const history = await db.getMessages(roomId, 50);
-      socket.emit("history", history);
+      socket.emit("history", { roomId, history });
 
       const docs = await db.getDocs(parseInt(roomId) || 0);
       socket.emit("docsUpdate", docs);
@@ -831,17 +835,20 @@ async function startServer() {
         replyTo = data.replyTo;
       }
 
+      const savedMsg = await db.addMessage(user.roomId, user.username, text, user.avatar, replyTo);
+      
       const message = {
+        id: savedMsg.id,
         username: user.username,
         text,
         avatar: user.avatar,
         timestamp: new Date().toISOString(),
+        room_id: user.roomId,
         reply_to_id: replyTo?.id,
         reply_to_text: replyTo?.text,
         reply_to_username: replyTo?.username,
       };
 
-      await db.addMessage(user.roomId, user.username, text, user.avatar, replyTo);
       io.to(user.roomId).emit("message", message);
     });
 
