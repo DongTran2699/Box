@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from "react";
 import { io, Socket } from "socket.io-client";
 import { motion, AnimatePresence } from "motion/react";
-import { Send, User, LogOut, Trash2, Users, MessageSquare, UserPlus, X, ShieldCheck } from "lucide-react";
+import TextareaAutosize from "react-textarea-autosize";
+import { Send, User, LogOut, Trash2, Users, MessageSquare, UserPlus, X, ShieldCheck, Wifi, WifiOff } from "lucide-react";
 
 type Message = {
   id?: number;
@@ -21,16 +22,44 @@ export default function App() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [newMemberName, setNewMemberName] = useState("");
   const [error, setError] = useState("");
+  const [isConnected, setIsConnected] = useState(false);
+  const [typingUsers, setTypingUsers] = useState<string[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const ADMIN_USER = "dongtran2699";
 
   useEffect(() => {
-    const newSocket = io();
+    const newSocket = io({
+      reconnection: true,
+      reconnectionAttempts: 10,
+      reconnectionDelay: 1000,
+    });
     setSocket(newSocket);
+
+    newSocket.on("connect", () => {
+      setIsConnected(true);
+      if (username) {
+        newSocket.emit("join", username);
+      }
+    });
+
+    newSocket.on("disconnect", () => {
+      setIsConnected(false);
+    });
 
     newSocket.on("message", (msg: Message) => {
       setMessages((prev) => [...prev, msg]);
+      // Play sound if not me
+      if (msg.username !== username && msg.username !== "System") {
+        const audio = new Audio("https://assets.mixkit.co/active_storage/sfx/2354/2354-preview.mp3");
+        audio.volume = 0.5;
+        audio.play().catch(() => {}); // Ignore autoplay errors
+      }
+    });
+
+    newSocket.on("typingUpdate", (users: string[]) => {
+      setTypingUsers(users.filter(u => u !== username));
     });
 
     newSocket.on("history", (history: Message[]) => {
@@ -69,14 +98,41 @@ export default function App() {
       socket.emit("join", username.trim());
       setIsJoined(true);
       setError("");
+      // Store username in local storage for auto-reconnect context
+      localStorage.setItem("chat_username", username.trim());
     }
   };
 
-  const handleSendMessage = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleTyping = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setMessage(e.target.value);
+    
+    if (socket) {
+      socket.emit("typing", true);
+      
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+      }
+
+      typingTimeoutRef.current = setTimeout(() => {
+        socket.emit("typing", false);
+      }, 2000);
+    }
+  };
+
+  const handleSendMessage = (e?: React.FormEvent) => {
+    e?.preventDefault();
     if (message.trim() && socket) {
       socket.emit("sendMessage", message.trim());
+      socket.emit("typing", false);
       setMessage("");
+      if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSendMessage();
     }
   };
 

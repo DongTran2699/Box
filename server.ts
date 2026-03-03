@@ -35,6 +35,12 @@ async function startServer() {
     cors: {
       origin: "*",
     },
+    connectionStateRecovery: {
+      // the backup duration of the sessions and the packets
+      maxDisconnectionDuration: 2 * 60 * 1000,
+      // whether to skip middlewares upon successful recovery
+      skipMiddlewares: true,
+    },
   });
 
   const PORT = 3000;
@@ -43,9 +49,15 @@ async function startServer() {
 
   // State
   let activeUsers = new Map<string, string>(); // socketId -> username
+  let typingUsers = new Set<string>(); // username
 
   io.on("connection", (socket) => {
     console.log("A user connected:", socket.id);
+
+    if (socket.recovered) {
+      // recovery was successful: socket.id, socket.rooms and socket.data were restored
+      console.log("Session recovered for:", socket.id);
+    }
 
     socket.on("join", (username: string) => {
       // Check whitelist
@@ -157,11 +169,25 @@ async function startServer() {
       }
     });
 
+    socket.on("typing", (isTyping: boolean) => {
+      const username = activeUsers.get(socket.id);
+      if (username) {
+        if (isTyping) {
+          typingUsers.add(username);
+        } else {
+          typingUsers.delete(username);
+        }
+        socket.broadcast.emit("typingUpdate", Array.from(typingUsers));
+      }
+    });
+
     socket.on("disconnect", () => {
       const username = activeUsers.get(socket.id);
       if (username) {
         activeUsers.delete(socket.id);
+        typingUsers.delete(username);
         io.emit("userList", Array.from(new Set(activeUsers.values())));
+        io.emit("typingUpdate", Array.from(typingUsers));
         io.emit("message", {
           username: "System",
           text: `${username} đã rời cuộc trò chuyện.`,
