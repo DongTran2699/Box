@@ -84,6 +84,7 @@ export default function App() {
   const [isConnected, setIsConnected] = useState(false);
   const [isConnecting, setIsConnecting] = useState(true);
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
+  const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [windowWidth, setWindowWidth] = useState(typeof window !== 'undefined' ? window.innerWidth : 1024);
   const [activeTab, setActiveTab] = useState<"chat" | "docs">("chat");
@@ -184,14 +185,21 @@ export default function App() {
     });
 
     newSocket.on("message", (msg: Message) => {
-      // Only add message if it belongs to current room
-      if (msg.room_id && currentRoomRef.current && msg.room_id !== currentRoomRef.current.id.toString()) {
-        return;
+      const isCurrentRoom = msg.room_id && currentRoomRef.current && msg.room_id === currentRoomRef.current.id.toString();
+      
+      if (isCurrentRoom) {
+        setMessages((prev) => {
+          if (msg.id && prev.some(m => m.id === msg.id)) return prev;
+          return [...prev, msg];
+        });
+      } else if (msg.room_id) {
+        // Increment unread count for other rooms
+        setUnreadCounts(prev => ({
+          ...prev,
+          [msg.room_id!]: (prev[msg.room_id!] || 0) + 1
+        }));
       }
-      setMessages((prev) => {
-        if (msg.id && prev.some(m => m.id === msg.id)) return prev;
-        return [...prev, msg];
-      });
+
       if (msg.username !== username && msg.username !== "System") {
         const audio = new Audio("https://assets.mixkit.co/active_storage/sfx/2354/2354-preview.mp3");
         audio.volume = 0.5;
@@ -227,12 +235,11 @@ export default function App() {
     newSocket.on("roomsUpdate", (roomList: Room[]) => {
       setRooms(roomList);
       setCurrentRoom(prev => {
-        if (!prev) {
-          const general = roomList.find(r => r.name === "General");
-          return general || roomList[0];
+        const next = prev ? (roomList.find(r => r.id === prev.id) || prev) : (roomList.find(r => r.name === "General") || roomList[0]);
+        if (next) {
+          setUnreadCounts(u => ({ ...u, [next.id.toString()]: 0 }));
         }
-        const updated = roomList.find(r => r.id === prev.id);
-        return updated || prev;
+        return next;
       });
     });
 
@@ -313,6 +320,7 @@ export default function App() {
   const handleSwitchRoom = (room: Room) => {
     if (socket && room.id !== currentRoom?.id) {
       setMessages([]); // Clear messages immediately when switching
+      setUnreadCounts(prev => ({ ...prev, [room.id.toString()]: 0 }));
       socket.emit("switchRoom", room.id.toString());
       setCurrentRoom(room);
       setIsSidebarOpen(false);
@@ -580,7 +588,15 @@ export default function App() {
                     }`}
                   >
                     <Hash size={16} className={currentRoom?.id === r.id ? "text-indigo-600 dark:text-indigo-400" : "text-zinc-400 dark:text-zinc-500"} />
-                    <span className="text-sm font-bold truncate">{r.name}</span>
+                    <div className="flex-1 flex items-center justify-between overflow-hidden">
+                      <span className="text-sm font-bold truncate">{r.name}</span>
+                      {unreadCounts[r.id.toString()] > 0 && (
+                        <span className="relative flex h-2 w-2">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                          <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
+                        </span>
+                      )}
+                    </div>
                   </button>
                   {username === ADMIN_USER && r.name !== "General" && (
                     <div className="flex items-center opacity-0 group-hover:opacity-100 transition-all">

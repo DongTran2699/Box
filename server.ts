@@ -602,6 +602,9 @@ async function startServer() {
 
       const rooms = await db.getRooms(username);
       socket.emit("roomsUpdate", rooms);
+      
+      // Join all rooms for notifications
+      rooms.forEach(r => socket.join(r.id.toString()));
 
       const history = await db.getMessages(roomId, 500);
       socket.emit("history", { roomId, history });
@@ -628,9 +631,7 @@ async function startServer() {
       const user = activeUsers.get(socket.id);
       if (!user) return;
 
-      socket.leave(user.roomId);
       user.roomId = roomId;
-      socket.join(roomId);
 
       const history = await db.getMessages(roomId, 500);
       socket.emit("history", { roomId, history });
@@ -691,6 +692,7 @@ async function startServer() {
       if (!user) return;
       
       const room = await db.createRoom(name, user.username);
+      socket.join(room.id.toString());
       const rooms = await db.getRooms(user.username);
       socket.emit("roomsUpdate", rooms);
     });
@@ -745,6 +747,7 @@ async function startServer() {
       // Notify the added user if online
       for (const [sid, u] of activeUsers.entries()) {
         if (u.username === username) {
+          io.sockets.sockets.get(sid)?.join(roomId.toString());
           const updatedRooms = await db.getRooms(username);
           io.to(sid).emit("roomsUpdate", updatedRooms);
         }
