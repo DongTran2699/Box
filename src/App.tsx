@@ -5,14 +5,21 @@ import TextareaAutosize from "react-textarea-autosize";
 import { 
   Send, User, LogOut, Trash2, Users, MessageSquare, 
   UserPlus, X, ShieldCheck, Wifi, WifiOff, Menu, 
-  Plus, Hash, FileText, ChevronRight, Save, Edit3
+  Plus, Hash, FileText, ChevronRight, Save, Edit3,
+  Zap, Star, Heart, Smile
 } from "lucide-react";
 
 type Message = {
   id?: number;
   username: string;
   text: string;
+  avatar?: string;
   timestamp: string;
+};
+
+type UserInfo = {
+  username: string;
+  avatar: string;
 };
 
 type Room = {
@@ -41,10 +48,11 @@ type Note = {
 export default function App() {
   const [socket, setSocket] = useState<Socket | null>(null);
   const [username, setUsername] = useState("");
+  const [avatar, setAvatar] = useState("user");
   const [isJoined, setIsJoined] = useState(false);
   const [message, setMessage] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
-  const [users, setUsers] = useState<string[]>([]);
+  const [users, setUsers] = useState<UserInfo[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
   const [currentRoom, setCurrentRoom] = useState<Room | null>(null);
   const [docs, setDocs] = useState<Doc[]>([]);
@@ -80,8 +88,12 @@ export default function App() {
 
   useEffect(() => {
     const savedUsername = localStorage.getItem("chat_username");
+    const savedAvatar = localStorage.getItem("chat_avatar");
     if (savedUsername) {
       setUsername(savedUsername);
+    }
+    if (savedAvatar) {
+      setAvatar(savedAvatar);
     }
 
     const SOCKET_URL = import.meta.env.VITE_API_URL || undefined;
@@ -95,8 +107,9 @@ export default function App() {
     newSocket.on("connect", () => {
       setIsConnected(true);
       const currentUname = localStorage.getItem("chat_username");
+      const currentAvatar = localStorage.getItem("chat_avatar") || "user";
       if (currentUname) {
-        newSocket.emit("join", currentUname);
+        newSocket.emit("join", { username: currentUname, avatar: currentAvatar });
       }
     });
 
@@ -121,7 +134,7 @@ export default function App() {
       setMessages(history);
     });
 
-    newSocket.on("userList", (userList: string[]) => {
+    newSocket.on("userList", (userList: UserInfo[]) => {
       setUsers(userList);
     });
 
@@ -161,13 +174,22 @@ export default function App() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, typingUsers]);
 
+  const AVATARS = [
+    { id: "user", icon: User, color: "bg-zinc-100 text-zinc-600" },
+    { id: "zap", icon: Zap, color: "bg-yellow-100 text-yellow-600" },
+    { id: "star", icon: Star, color: "bg-indigo-100 text-indigo-600" },
+    { id: "heart", icon: Heart, color: "bg-rose-100 text-rose-600" },
+    { id: "smile", icon: Smile, color: "bg-emerald-100 text-emerald-600" },
+  ];
+
   const handleJoin = (e: React.FormEvent) => {
     e.preventDefault();
     if (username.trim() && socket) {
-      socket.emit("join", username.trim());
+      socket.emit("join", { username: username.trim(), avatar });
       setIsJoined(true);
       setError("");
       localStorage.setItem("chat_username", username.trim());
+      localStorage.setItem("chat_avatar", avatar);
     }
   };
 
@@ -291,6 +313,7 @@ export default function App() {
     if (socket) {
       socket.disconnect();
       localStorage.removeItem("chat_username");
+      localStorage.removeItem("chat_avatar");
       window.location.reload();
     }
   };
@@ -305,44 +328,67 @@ export default function App() {
         >
           <div className="flex flex-col items-center mb-8">
             <div className="w-16 h-16 bg-indigo-600 rounded-2xl flex items-center justify-center mb-4 shadow-lg shadow-indigo-200">
-              <MessageSquare className="text-white w-8 h-8" />
+              <Hash className="text-white w-8 h-8" />
             </div>
-            <h1 className="text-2xl font-bold text-zinc-900">Chào mừng đến với DongChat</h1>
-            <p className="text-zinc-500 text-sm mt-1">Vui lòng nhập tên để bắt đầu trò chuyện</p>
+            <h1 className="text-3xl font-extrabold text-zinc-900 tracking-tight">BOX</h1>
+            <p className="text-zinc-500 text-sm mt-1">Không gian chat & làm việc nhóm</p>
           </div>
 
-          <form onSubmit={handleJoin} className="space-y-4">
+          <form onSubmit={handleJoin} className="space-y-6">
+            <div>
+              <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-3 ml-1">
+                Chọn Avatar
+              </label>
+              <div className="flex justify-between gap-2">
+                {AVATARS.map((av) => {
+                  const Icon = av.icon;
+                  const isSelected = avatar === av.id;
+                  return (
+                    <button
+                      key={av.id}
+                      type="button"
+                      onClick={() => setAvatar(av.id)}
+                      className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all ${
+                        isSelected 
+                          ? "bg-indigo-600 text-white shadow-lg shadow-indigo-200 scale-110" 
+                          : "bg-zinc-50 text-zinc-400 hover:bg-zinc-100"
+                      }`}
+                    >
+                      <Icon size={20} />
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
             <div>
               <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-1.5 ml-1">
-                Tên người dùng
+                Tên hiển thị
               </label>
               <input
                 type="text"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                placeholder="Ví dụ: dongtran2699"
-                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
+                placeholder="Nhập tên của bạn..."
+                className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all font-medium"
                 autoFocus
               />
             </div>
+
             {error && (
               <p className="text-red-500 text-xs font-medium bg-red-50 p-2 rounded-lg border border-red-100">
                 {error}
               </p>
             )}
+
             <button
               type="submit"
               disabled={!username.trim()}
-              className="w-full bg-indigo-600 text-white font-semibold py-3 rounded-xl hover:bg-indigo-700 active:scale-[0.98] transition-all disabled:opacity-50 disabled:pointer-events-none shadow-lg shadow-indigo-200"
+              className="w-full bg-indigo-600 text-white font-bold py-3.5 rounded-xl hover:bg-indigo-700 active:scale-[0.98] transition-all disabled:opacity-50 disabled:pointer-events-none shadow-lg shadow-indigo-200"
             >
-              Tham gia ngay
+              Vào Box
             </button>
           </form>
-          
-          <div className="mt-8 pt-6 border-t border-zinc-100 flex items-center justify-between text-[10px] text-zinc-400 font-medium uppercase tracking-widest">
-            <span>Quản lý bởi dongtran2699</span>
-            <span>Tối đa 10 người</span>
-          </div>
         </motion.div>
       </div>
     );
@@ -427,14 +473,19 @@ export default function App() {
               </span>
             </div>
             <div className="space-y-1">
-              {users.map((u) => (
-                <div key={u} className="flex items-center gap-3 p-2.5 rounded-xl hover:bg-zinc-50 transition-all">
-                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold ${u === ADMIN_USER ? "bg-amber-100 text-amber-700" : "bg-zinc-100 text-zinc-500"}`}>
-                    {u.charAt(0).toUpperCase()}
+              {users.map((u) => {
+                const avatarId = u.avatar || "user";
+                const avatarConfig = AVATARS.find(a => a.id === avatarId) || AVATARS[0];
+                const AvatarIcon = avatarConfig.icon;
+                return (
+                  <div key={u.username} className="flex items-center gap-3 p-2.5 rounded-xl hover:bg-zinc-50 transition-all">
+                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${avatarConfig.color}`}>
+                      <AvatarIcon size={16} />
+                    </div>
+                    <span className="text-sm font-semibold text-zinc-700 truncate">{u.username}</span>
                   </div>
-                  <span className="text-sm font-semibold text-zinc-700 truncate">{u}</span>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
 
@@ -569,6 +620,10 @@ export default function App() {
                     const isMe = msg.username === username;
                     const showAvatar = !isMe && !isSystem && (i === 0 || messages[i-1].username !== msg.username);
                     
+                    const avatarId = msg.avatar || "user";
+                    const avatarConfig = AVATARS.find(a => a.id === avatarId) || AVATARS[0];
+                    const AvatarIcon = avatarConfig.icon;
+
                     return (
                       <motion.div
                         key={msg.id || i}
@@ -579,10 +634,8 @@ export default function App() {
                         {!isMe && !isSystem && (
                           <div className="w-8 h-8 flex-shrink-0">
                             {showAvatar ? (
-                              <div className={`w-8 h-8 rounded-xl flex items-center justify-center text-[10px] font-bold shadow-sm ${
-                                msg.username === ADMIN_USER ? "bg-amber-100 text-amber-700" : "bg-white border border-zinc-200 text-zinc-500"
-                              }`}>
-                                {msg.username.charAt(0).toUpperCase()}
+                              <div className={`w-8 h-8 rounded-xl flex items-center justify-center shadow-sm ${avatarConfig.color}`}>
+                                <AvatarIcon size={16} />
                               </div>
                             ) : <div className="w-8" />}
                           </div>
